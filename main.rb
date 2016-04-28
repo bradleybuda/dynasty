@@ -51,10 +51,10 @@ raise unless GOFIRST_DRAFT_ORDER.size == (DRAFT_ROUNDS * TEAMS)
 
 # TODO optimize AIs - search, GA, etc
 PERSONALITIES = {
-  "Warriors" => {pass_rates: {final: 0.1, semifinal: 0.3}, greedy: true, dont_waste_cards: true},
-  "Spurs" => {pass_rates: {final: 0.2, semifinal: 0.5}, greedy: true, dont_waste_cards: true},
-  "Cavs" => {pass_rates: {final: 0.2, semifinal: 0.3}, greedy: true, dont_waste_cards: true},
-  "Celtics" => {pass_rates: {final: 0.1, semifinal: 0.6}, greedy: true, dont_waste_cards: true},
+  "Warriors" => {pass_rates: {final: 0.2, semifinal: 0.3}, aggression: 1.5},
+  "Spurs" => {pass_rates: {final: 0.2, semifinal: 0.3}, aggression: 1.1},
+  "Cavs" => {pass_rates: {final: 0.2, semifinal: 0.3}, aggression: 0.9},
+  "Celtics" => {pass_rates: {final: 0.2, semifinal: 0.3}, aggression: 0.6},
 }
 
 class HumanAgent
@@ -71,7 +71,6 @@ class HumanAgent
     if play.empty?
       :pass
     else
-      # TODO engine should validate play
       play.to_i
     end
   end
@@ -83,13 +82,13 @@ class AiAgent
     @personality = personality
   end
 
-  # TODO aggression parameter - don't be strictly random or greedy, but progressively slow
-  def make_move_by_pick
-    if @personality[:greedy]
-      @team.roster.sort.last
-    else
-      @team.roster.shuffle.first
+  def play_card(aggression)
+    pick_index = (Random.rand * aggression * @team.roster.size).floor
+    if pick_index > @team.roster.size - 1
+      pick_index = @team.roster.size - 1
     end
+
+    @team.roster.sort[pick_index]
   end
 
   def throw_off_or_pass
@@ -103,20 +102,23 @@ class AiAgent
   def make_move(match)
     # Strategic TODOs
     # * Size opponent's play (min, max, mean) based on knowledge of their hand and # of cards played
-    # * Determine if it's impossible to win and give up (min exceeds your hand total)
-    # * Determine if you've already won and stop playing (max is below your played card)
     # * Play until your total exceeds your best estimate of their total, and no more
     # * don't play all of your cards in a semifinal (unless the other side of the bracket already did and you're the home team)
     # * don't pass if you're the opener and you have more than two cards
     # * pass rate paramaterized on cards played / remaining
+    # * if the opponent has passed, play the smallest card you can to win
 
     # Calculate some hand metrics
     opponent_starting_hand = match.opponent_starting_hand(@team)
     opponent_card_count = match.opponent_card_count(@team)
 
+    opponent_hand_estimates = Array.new(100) { opponent_starting_hand.shuffle.first(opponent_card_count).reduce(&:+) || 0 }
+    opponent_hand_estimate = opponent_hand_estimates.reduce(&:+).to_f / opponent_hand_estimates.size.to_f
+
     metrics = {
       worst_current_opponent_score: opponent_starting_hand.sort.first(opponent_card_count).reduce(&:+) || 0,
       best_current_opponent_score: opponent_starting_hand.sort.last(opponent_card_count).reduce(&:+) || 0,
+      estimated_current_opponent_score: opponent_hand_estimate,
       best_possible_opponent_score: opponent_starting_hand.reduce(&:+) || 0,
       my_score: match.my_score(@team),
       my_best_possible_score: match.starting_hand(@team).reduce(&:+) || 0,
@@ -128,19 +130,25 @@ class AiAgent
 
     $logger.debug "Hand analysis: #{metrics.inspect}"
 
+    aggression = @personality[:aggression] * metrics[:my_best_possible_score] / (metrics[:best_possible_opponent_score] + 1)
+    $logger.debug "Aggression for this play is: #{aggression}"
+    # TODO bonus aggression for home team
+    # TODO make pass rate a fn of aggression
+
     if metrics[:my_score] > metrics[:best_possible_opponent_score]
       $logger.debug "Victory is guaranteed, passing"
       :pass
     elsif metrics[:my_best_possible_score] < metrics[:worst_current_opponent_score]
       $logger.debug "No win situation, throwing off"
       throw_off_or_pass
-    elsif (@personality[:dont_waste_cards] && (match.stage == :final) && (@team.roster.size > 2))
-      # TODO No point in passing, *but* I should be playing my worst cards in this mode
-      make_move_by_pick
+    elsif (match.stage == :final) && (@team.roster.size > 2)
+      # TODO No point in passing, *but* I maybe shouldn't be playing by best cards in this mode
+      $logger.debug "Will never pass in the final with more than two cards left"
+      play_card(aggression)
     elsif Random.rand < @personality[:pass_rates][match.stage]
       :pass
     else
-      make_move_by_pick
+      play_card(aggression)
     end
   end
 end
@@ -204,7 +212,7 @@ class MatchParticipant
         if play_index = @team.roster.find_index(play)
           @cards_played << play
           @team.roster.delete_at(play_index)
-          $logger.debug "#{@team.name} played a card"
+          $logger.debug "#{@team.name} played #{play}" # TODO hide from human
         else
           raise "illegal play: #{play}"
         end
@@ -348,7 +356,7 @@ def play_game!
       end
     end
 
-    $logger.debug "Keepers: #{teams.inspect}"
+    $logger.debug "Keepers: #{teams.map { |t| [t.name, t.roster] }}"
 
     season += 1
   end
@@ -358,11 +366,11 @@ end
 
 win_rate = {}
 
-1.times do
+10000.times do
   winner = play_game!
   win_rate[winner.name] ||= 0
   win_rate[winner.name] += 1
 end
 
 $logger.info PERSONALITIES.inspect
-$logger.info win_rate.inspect
+$logger.warn win_rate.inspect
