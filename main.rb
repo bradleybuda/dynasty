@@ -7,7 +7,7 @@ require 'cabin'
 
 $logger = Cabin::Channel.new
 $logger.subscribe(STDOUT)
-$logger.level = :debug
+$logger.level = :error
 
 TEAMS = 4
 INITIAL_ROSTER = [4,3]
@@ -55,7 +55,7 @@ raise unless GOFIRST_DRAFT_ORDER.size == (DRAFT_ROUNDS * TEAMS)
 #puts draft_order.map{ |d| d.join(",") }.join("\n")
 
 # Not really very stable at all
-BEST_KNOWN_PERSONALITY = {:semifinal=>{:pass_rate=>0.4283637209326171, :aggression=>0.9269851836025846, :score_ratio_exponent=>5.207624965185063, :home_aggression_bonus=>2.036206470772239}, :final=>{:pass_rate=>0.03887686260875057, :aggression=>4.856051743802492, :score_ratio_exponent=>2.662435833063665, :home_aggression_bonus=>2.0043335941280818}}
+BEST_KNOWN_PERSONALITY = {:semifinal=>{:pass_rate=>1.0696475272189916, :aggression=>0.0013827640401035998, :score_ratio_exponent=>2.1563033338076782, :home_aggression_bonus=>1.4787667974463488}, :final=>{:pass_rate=>0.034638097092212786, :aggression=>6.875988116259013, :score_ratio_exponent=>2.0428466152764955, :home_aggression_bonus=>1.275651718681938}}
 
 # TODO optimize AIs - search, GA, etc
 def make_random_personality
@@ -121,6 +121,7 @@ class HumanAgent
   end
 end
 
+# TODO eliminate as many random "sort"s as I can
 class AiAgent
   attr_reader :personality
 
@@ -134,13 +135,14 @@ class AiAgent
     card
   end
 
-  def play_random_card(aggression)
-    pick_index = (Random.rand * aggression * @team.roster.size).floor
-    if pick_index > @team.roster.size - 1
-      pick_index = @team.roster.size - 1
+  def play_random_card(aggression, card_set: @team.roster)
+    # reduced the random bias here; TODO eliminate it? Random makes it hard to evolve
+    pick_index = ((0.2 * Random.rand + 0.9) * aggression * card_set.size).floor
+    if pick_index > card_set.size - 1
+      pick_index = card_set.size - 1
     end
 
-    play_card(@team.roster.sort[pick_index])
+    play_card(card_set.sort[pick_index])
   end
 
   def throw_off_or_pass
@@ -215,8 +217,9 @@ class AiAgent
     elsif (needed_for_guaranteed_lead > 0) && !leapfrog_cards.empty?
       # We can take the lead by playing off a card that we would lose anyway in the offseason, so do it
       # This might not be optimal but it's better than the AI's current behavior
+      # TODO but in most cases, still too conservative
       $logger.debug "can take the lead with any of #{leapfrog_cards}, will play a random one"
-      play_card(leapfrog_cards.shuffle.first) # TODO paramaterize on aggression rather than playing random?
+      play_random_card(aggression, card_set: leapfrog_cards)
 
     elsif (match.stage == :final) && (@team.roster.size > 2)
       # TODO No point in passing, *but* I maybe shouldn't be playing by best cards in this mode
@@ -373,7 +376,6 @@ def play_game!(teams)
     permute_array(GOFIRST_DRAFT_ORDER, season)
   end
 
-  teams[0] = Team.new(0, human: true)
   free_agents = PLAYERS.dup
 
   # Pre-game - give each team their initial roster
@@ -445,10 +447,11 @@ def play_game!(teams)
 
   victor = teams.find { |t| t.championships == 3 }
   $logger.warn "#{victor.name} have the dynasty!"
-  victor
+
+  [victor, season]
 end
 
-hall_of_fame = Array.new(20) { make_random_personality }
+hall_of_fame = Array.new(20) { BEST_KNOWN_PERSONALITY.dup }
 
 iteration = 0
 checkpoint = nil
@@ -459,15 +462,24 @@ require 'pp'
 loop do
   iteration += 1
 
-  # Make tournament
+  # Choose players for tournament
   personalities = [hall_of_fame[0], # most recent winner
                    cross_breed(hall_of_fame[0], hall_of_fame[Random.rand(hall_of_fame.size)]), # winner and offsping
                    cross_breed(hall_of_fame[Random.rand(hall_of_fame.size)], hall_of_fame[Random.rand(hall_of_fame.size)]), # veteran offspring
                    mutate(hall_of_fame[0]) # mutant
-                  ]
+                  ].each_with_index.map { |pers,i| pers.merge({round_robin_wins: 0}) }
 
-  # Overwrite with "best" AIs
-  personalities = Array.new(4) { BEST_KNOWN_PERSONALITY.dup }
+
+  # Play a round robin of these personalities to reduce noise and eliminate any ordering biases
+  # TODO play these simultaneously to speed things up
+  [0,1,2,3].permutation.each do |permutation|
+    personality_order = permutation.map { |perm| personalities[perm] }
+    teams = personality_order.each_with_index.map { |p,i| Team.new(i, personality: p) }
+    winner, season = play_game!(teams)
+    winner.agent.personality[:round_robin_wins] += 1 # TODO factor in win speed
+  end
+
+  round_robin_winner = personalities.max_by { |p| p[:round_robin_wins] }
 
   # Occasionally inject a random vet
   if (iteration % 50) == 0
@@ -475,14 +487,11 @@ loop do
     hall_of_fame.unshift(make_random_personality)
   end
 
-  teams = personalities.shuffle.each_with_index.map { |p,i| Team.new(i, personality: p) }
-  winner = play_game!(teams) # TODO play in every position to reduce noise and smooth any ordering biases
-
-  # Age one team out of HoF
+  # Add the winner to the HoF
   hall_of_fame.pop
-  hall_of_fame.unshift(winner.agent.personality)
+  hall_of_fame.unshift(round_robin_winner)
 
-  $logger.warn "winner", winner.agent.personality
+  $logger.warn "winner", round_robin_winner
 
 
   if (iteration % 1000) == 0
