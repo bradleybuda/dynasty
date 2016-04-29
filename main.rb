@@ -55,11 +55,15 @@ raise unless GOFIRST_DRAFT_ORDER.size == (DRAFT_ROUNDS * TEAMS)
 #puts draft_order.map{ |d| d.join(",") }.join("\n")
 
 # Not really very stable at all
-BEST_KNOWN_PERSONALITY = {:semifinal=>{:pass_rate=>1.0696475272189916, :aggression=>0.0013827640401035998, :score_ratio_exponent=>2.1563033338076782, :home_aggression_bonus=>1.4787667974463488}, :final=>{:pass_rate=>0.034638097092212786, :aggression=>6.875988116259013, :score_ratio_exponent=>2.0428466152764955, :home_aggression_bonus=>1.275651718681938}}
+BEST_KNOWN_PERSONALITY = {:trade=>{:discount_rate=>0.05,:greed=>0.1},:semifinal=>{:pass_rate=>1.0696475272189916, :aggression=>0.0013827640401035998, :score_ratio_exponent=>2.1563033338076782, :home_aggression_bonus=>1.4787667974463488}, :final=>{:pass_rate=>0.034638097092212786, :aggression=>6.875988116259013, :score_ratio_exponent=>2.0428466152764955, :home_aggression_bonus=>1.275651718681938}}
 
 # TODO optimize AIs - search, GA, etc
 def make_random_personality
   {
+    trade: {
+      discount_rate: Random.rand,
+      greed: Random.rand,
+    },
     semifinal: {
       pass_rate: Random.rand,
       aggression: Random.rand * 10.0,
@@ -78,6 +82,11 @@ end
 def cross_breed(a,b)
   child = {}
 
+  child[:trade] = {
+    discount_rate: [a,b].shuffle.first[:trade][:discount_rate],
+    greed: [a,b].shuffle.first[:trade][:greed],
+  }
+
   [:semifinal, :final].each do |stage|
     child[stage] = {}
     [:pass_rate, :aggression, :score_ratio_exponent, :home_aggression_bonus].each do |attr|
@@ -90,6 +99,12 @@ end
 
 def mutate(p)
   child = {}
+
+  child[:trade] = {
+    discount_rate: p[:trade][:discount_rate] * (Random.rand * 0.1 + 0.95),
+    greed: p[:trade][:greed] * (Random.rand * 0.1 + 0.95),
+  }
+
   [:semifinal, :final].each do |stage|
     child[stage] = {}
     [:pass_rate, :aggression, :score_ratio_exponent, :home_aggression_bonus].each do |attr|
@@ -169,6 +184,11 @@ class AiAgent
     picks
   end
 
+  def pick_value(current_season, pick_season, pick_index)
+    # TODO measure real values for player at pick, instead of ideal; this is an over-estimate due to keepers
+    PLAYERS[pick_index] * ((1 - @personality[:trade][:discount_rate]) ** (pick_season - current_season))
+  end
+
   def request_trade_proposal(current_season, current_pick_index, draft_order)
     if Random.rand < 0.15
       my_picks = find_remaining_picks(draft_order, [@team.idx], current_season, current_pick_index)
@@ -176,15 +196,26 @@ class AiAgent
       others.delete(@team.idx)
       others_picks = find_remaining_picks(draft_order, others, current_season, current_pick_index)
 
-      if others_picks.empty?
-        nil # Nothing to trade for
-      else
-        # TODO remove .first, there for simpler debugging
-        from_pick = my_picks.first(5).shuffle.first
-        to_pick = others_picks.first(30).shuffle.first
+      from_pick = my_picks.shuffle.first
+      from_pick_value = pick_value(current_season, from_pick[:season], from_pick[:pick_index])
+      greed_threshold = from_pick_value * (1 + @personality[:trade][:greed])
+
+      # Look for a target that's more valuable than my pick but within my greed threshold
+      to_pick = others_picks.find do |other_pick|
+        # Don't bother proposing a trade within season
+        next if (from_pick[:season] == other_pick[:season])
+
+        to_pick_value = pick_value(current_season, other_pick[:season], other_pick[:pick_index])
+        (to_pick_value > from_pick_value) && (to_pick_value <= greed_threshold)
+      end
+
+      if to_pick
+        $logger.debug "Proposing trade which loses #{from_pick_value} and gains #{pick_value(current_season, to_pick[:season], to_pick[:pick_index])}"
 
         Trade.new to_pick[:team_index], to_pick[:season], to_pick[:pick_index],
                   from_pick[:team_index], from_pick[:season], from_pick[:pick_index]
+      else
+        nil # no appealing trades (or no possible trades)
       end
     else
       nil
@@ -192,7 +223,10 @@ class AiAgent
   end
 
   def accept_trade?(season, pick_index, draft_order, trade)
-    Random.rand < 0.6
+    lost_value = pick_value(season, trade.to_season, trade.to_pick_index)
+    gained_value = pick_value(season, trade.from_season, trade.from_pick_index)
+    $logger.debug "Evaluating trade which loses #{lost_value} and gains #{gained_value}"
+    gained_value > lost_value
   end
 
   def make_move(match)
