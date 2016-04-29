@@ -7,7 +7,7 @@ require 'cabin'
 
 $logger = Cabin::Channel.new
 $logger.subscribe(STDOUT)
-$logger.level = :error
+$logger.level = :debug
 
 TEAMS = 4
 INITIAL_ROSTER = [4,3]
@@ -129,18 +129,23 @@ class AiAgent
     @personality = personality
   end
 
-  def play_card(aggression)
+  def play_card(card)
+    $logger.debug "playing card", card: card
+    card
+  end
+
+  def play_random_card(aggression)
     pick_index = (Random.rand * aggression * @team.roster.size).floor
     if pick_index > @team.roster.size - 1
       pick_index = @team.roster.size - 1
     end
 
-    @team.roster.sort[pick_index]
+    play_card(@team.roster.sort[pick_index])
   end
 
   def throw_off_or_pass
     if @team.roster.size > 2
-      @team.roster.sort.first
+      play_card(@team.roster.sort.first)
     else
       :pass
     end
@@ -194,20 +199,33 @@ class AiAgent
     effective_pass_rate = match_personality[:pass_rate] / (aggression * hand_load_factor)
     $logger.debug "Current pass rate is: #{effective_pass_rate}"
 
+    needed_for_guaranteed_lead = metrics[:best_current_opponent_score] - metrics[:my_score] + 1 # TODO include home adv here
+    wasted_cards = @team.roster.sort[0...-2]
+    leapfrog_cards = wasted_cards.find_all { |w| w > needed_for_guaranteed_lead }
+    $logger.debug("leapfrog?", needed_for_guaranteed_lead: needed_for_guaranteed_lead, wasted_cards: wasted_cards, leapfrog_cards: leapfrog_cards)
+
     if metrics[:my_score] > metrics[:best_possible_opponent_score]
       $logger.debug "Victory is guaranteed, passing"
       :pass
+
     elsif metrics[:my_best_possible_score] < metrics[:worst_current_opponent_score]
       $logger.debug "No win situation, throwing off"
       throw_off_or_pass
+
+    elsif (needed_for_guaranteed_lead > 0) && !leapfrog_cards.empty?
+      # We can take the lead by playing off a card that we would lose anyway in the offseason, so do it
+      # This might not be optimal but it's better than the AI's current behavior
+      $logger.debug "can take the lead with any of #{leapfrog_cards}, will play a random one"
+      play_card(leapfrog_cards.shuffle.first) # TODO paramaterize on aggression rather than playing random?
+
     elsif (match.stage == :final) && (@team.roster.size > 2)
       # TODO No point in passing, *but* I maybe shouldn't be playing by best cards in this mode
       $logger.debug "Will never pass in the final with more than two cards left"
-      play_card(aggression)
+      play_random_card(aggression)
     elsif Random.rand < effective_pass_rate
       :pass
     else
-      play_card(aggression)
+      play_random_card(aggression)
     end
   end
 end
@@ -261,17 +279,17 @@ class MatchParticipant
     if @team.roster.empty?
       # if out of cards, have to pass
       @passed = true
-      $logger.debug "#{@team.name} are out of cards, passing"
+      $logger.info "#{@team.name} are out of cards, passing"
     else
       play = @team.agent.make_move(@match)
       if play == :pass
         @passed = true
-        $logger.debug "#{@team.name} are electing to pass"
+        $logger.info "#{@team.name} are electing to pass"
       else
         if play_index = @team.roster.find_index(play)
           @cards_played << play
           @team.roster.delete_at(play_index)
-          $logger.debug "#{@team.name} played" # #{play}" # TODO hide from human
+          $logger.info "#{@team.name} played" # #{play}" # TODO hide from human
         else
           raise "illegal play: #{play}"
         end
@@ -323,16 +341,16 @@ class Match
   end
 
   def play!
-    $logger.debug "#{@home.team.name} have #{@home.team.roster.sort}"
-    $logger.debug "#{@away.team.name} have #{@away.team.roster.sort}"
+    $logger.info "#{@home.team.name} have #{@home.team.roster.sort}"
+    $logger.info "#{@away.team.name} have #{@away.team.roster.sort}"
 
     until [@away,@home].all?(&:passed?)
       @away.make_move
       @home.make_move
     end
 
-    $logger.debug "#{@home.team.name} played #{@home.cards_played.sort} for #{@home.score}"
-    $logger.debug "#{@away.team.name} played #{@away.cards_played.sort} for #{@away.score}"
+    $logger.info "#{@home.team.name} played #{@home.cards_played.sort} for #{@home.score}"
+    $logger.info "#{@away.team.name} played #{@away.cards_played.sort} for #{@away.score}"
 
     if @away.score > @home.score
       return @away.team
@@ -355,7 +373,7 @@ def play_game!(teams)
     permute_array(GOFIRST_DRAFT_ORDER, season)
   end
 
-#  teams[0] = Team.new(0, human: true)
+  teams[0] = Team.new(0, human: true)
   free_agents = PLAYERS.dup
 
   # Pre-game - give each team their initial roster
@@ -370,7 +388,7 @@ def play_game!(teams)
   season = $logger[:season] = 0
 
   while teams.all? { |t| t.championships < 3 }
-    $logger.debug "Season starting!"
+    $logger.info "Season starting!"
 
     # loop through seasons until one team has three championships
     # three phases to season: 1) draft (with trades), 2) tournament, 3) offseason (retain up to two)
@@ -391,16 +409,16 @@ def play_game!(teams)
     play_order = permute_array([0,1,2,3], season)
     east_semi = Match.new(teams[play_order[0]],teams[play_order[1]],:semifinal)
     east_winner = east_semi.play!
-    $logger.debug "East semifinal: #{east_semi.summary}"
+    $logger.info "East semifinal: #{east_semi.summary}"
 
     west_semi = Match.new(teams[play_order[2]],teams[play_order[3]],:semifinal)
     west_winner = west_semi.play!
-    $logger.debug "West semifinal: #{west_semi.summary}"
+    $logger.info "West semifinal: #{west_semi.summary}"
 
     final = Match.new(east_winner, west_winner,:final)
     champion = final.play!
-    $logger.debug "Final: #{final.summary}"
-    $logger.debug "#{champion.name} wins the season!"
+    $logger.info "Final: #{final.summary}"
+    $logger.info "#{champion.name} wins the season!"
     champion.championships += 1
 
     # Return played cards to free agency
@@ -418,15 +436,15 @@ def play_game!(teams)
       end
     end
 
-    $logger.debug "Standings: #{teams.map { |t| [t.name, t.championships] }}"
-    $logger.debug "Keepers: #{teams.map { |t| [t.name, t.roster] }}"
+    $logger.info "Standings: #{teams.map { |t| [t.name, t.championships] }}"
+    $logger.info "Keepers: #{teams.map { |t| [t.name, t.roster] }}"
 
     season += 1
     $logger[:season] = season
   end
 
   victor = teams.find { |t| t.championships == 3 }
-  $logger.info "#{victor.name} have the dynasty!"
+  $logger.warn "#{victor.name} have the dynasty!"
   victor
 end
 
@@ -447,6 +465,9 @@ loop do
                    cross_breed(hall_of_fame[Random.rand(hall_of_fame.size)], hall_of_fame[Random.rand(hall_of_fame.size)]), # veteran offspring
                    mutate(hall_of_fame[0]) # mutant
                   ]
+
+  # Overwrite with "best" AIs
+  personalities = Array.new(4) { BEST_KNOWN_PERSONALITY.dup }
 
   # Occasionally inject a random vet
   if (iteration % 50) == 0
