@@ -54,6 +54,9 @@ raise unless GOFIRST_DRAFT_ORDER.size == (DRAFT_ROUNDS * TEAMS)
 
 #puts draft_order.map{ |d| d.join(",") }.join("\n")
 
+# Not really very stable at all
+BEST_KNOWN_PERSONALITY = {:semifinal=>{:pass_rate=>0.4283637209326171, :aggression=>0.9269851836025846, :score_ratio_exponent=>5.207624965185063, :home_aggression_bonus=>2.036206470772239}, :final=>{:pass_rate=>0.03887686260875057, :aggression=>4.856051743802492, :score_ratio_exponent=>2.662435833063665, :home_aggression_bonus=>2.0043335941280818}}
+
 # TODO optimize AIs - search, GA, etc
 def make_random_personality
   {
@@ -187,7 +190,8 @@ class AiAgent
 
     $logger.debug "Aggression for this play is: #{aggression}"
 
-    effective_pass_rate = match_personality[:pass_rate] / aggression
+    hand_load_factor = @team.roster.size.to_f / 10.0
+    effective_pass_rate = match_personality[:pass_rate] / (aggression * hand_load_factor)
     $logger.debug "Current pass rate is: #{effective_pass_rate}"
 
     if metrics[:my_score] > metrics[:best_possible_opponent_score]
@@ -352,7 +356,6 @@ def play_game!(teams)
   end
 
 #  teams[0] = Team.new(0, human: true)
-  teams.shuffle!
   free_agents = PLAYERS.dup
 
   # Pre-game - give each team their initial roster
@@ -430,14 +433,13 @@ end
 hall_of_fame = Array.new(20) { make_random_personality }
 
 iteration = 0
+checkpoint = nil
+last_checkpoint = nil
 
 require 'pp'
 
 loop do
   iteration += 1
-
-  # Age one team out of HoF
-  hall_of_fame.pop
 
   # Make tournament
   personalities = [hall_of_fame[0], # most recent winner
@@ -446,13 +448,27 @@ loop do
                    mutate(hall_of_fame[0]) # mutant
                   ]
 
-  teams = personalities.each_with_index.map { |p,i| Team.new(i, personality: p) }
-  winner = play_game!(teams)
+  # Occasionally inject a random vet
+  if (iteration % 50) == 0
+    hall_of_fame.pop
+    hall_of_fame.unshift(make_random_personality)
+  end
+
+  teams = personalities.shuffle.each_with_index.map { |p,i| Team.new(i, personality: p) }
+  winner = play_game!(teams) # TODO play in every position to reduce noise and smooth any ordering biases
+
+  # Age one team out of HoF
+  hall_of_fame.pop
   hall_of_fame.unshift(winner.agent.personality)
 
   $logger.warn "winner", winner.agent.personality
 
+
   if (iteration % 1000) == 0
+    p "best known:"
+    p hall_of_fame[0]
+
+    p "current hof:"
     hof_matrix = hall_of_fame.map do |hof|
       row = []
       [:semifinal, :final].each do |stage|
@@ -462,8 +478,16 @@ loop do
       end
       row
     end
-
     pp hof_matrix
+
+    checkpoint = hof_matrix[0]
+
+    if last_checkpoint
+      drift = Math.sqrt(checkpoint.zip(last_checkpoint).map { |(a,b)| (a - b) ** 2 }.inject(&:+))
+      p drift
+    end
+    last_checkpoint = checkpoint
+
     puts
     puts
   end
