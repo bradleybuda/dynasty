@@ -1,8 +1,13 @@
-require 'logger'
+#!/usr/bin/env ruby
 
-$logger = Logger.new(STDOUT)
-$logger.level = Logger::DEBUG
+require 'rubygems'
+require 'bundler/setup'
 
+require 'cabin'
+
+$logger = Cabin::Channel.new
+$logger.subscribe(STDOUT)
+$logger.level = :error
 
 TEAMS = 4
 INITIAL_ROSTER = [4,3]
@@ -50,12 +55,46 @@ raise unless GOFIRST_DRAFT_ORDER.size == (DRAFT_ROUNDS * TEAMS)
 #puts draft_order.map{ |d| d.join(",") }.join("\n")
 
 # TODO optimize AIs - search, GA, etc
-PERSONALITIES = {
-  "Warriors" => {pass_rates: {final: 0.2, semifinal: 0.3}, aggression: 1.5},
-  "Spurs" => {pass_rates: {final: 0.2, semifinal: 0.3}, aggression: 1.1},
-  "Cavs" => {pass_rates: {final: 0.2, semifinal: 0.3}, aggression: 0.9},
-  "Celtics" => {pass_rates: {final: 0.2, semifinal: 0.3}, aggression: 0.6},
-}
+def make_random_personality
+  {
+    semifinal: {
+      pass_rate: Random.rand,
+      aggression: Random.rand * 10.0,
+      score_ratio_exponent: Random.rand * 5.0,
+      home_aggression_bonus: 1.0 + Random.rand,
+    },
+    final: {
+      pass_rate: Random.rand,
+      aggression: Random.rand * 10.0,
+      score_ratio_exponent: Random.rand * 5.0,
+      home_aggression_bonus: 1.0 + Random.rand,
+    },
+  }
+end
+
+def cross_breed(a,b)
+  child = {}
+
+  [:semifinal, :final].each do |stage|
+    child[stage] = {}
+    [:pass_rate, :aggression, :score_ratio_exponent, :home_aggression_bonus].each do |attr|
+      child[stage][attr] = [a,b].shuffle.first[stage][attr]
+    end
+  end
+
+  child
+end
+
+def mutate(p)
+  child = {}
+  [:semifinal, :final].each do |stage|
+    child[stage] = {}
+    [:pass_rate, :aggression, :score_ratio_exponent, :home_aggression_bonus].each do |attr|
+      child[stage][attr] = p[stage][attr] * (Random.rand * 0.1 + 0.95)
+    end
+  end
+  child
+end
 
 class HumanAgent
   def initialize(team)
@@ -63,8 +102,11 @@ class HumanAgent
   end
 
   def make_move(match)
+    puts
     puts "You are the #{@team.name}"
     puts "Your hand: #{@team.roster.sort}"
+    puts "Opponent has played #{match.opponent_card_count(@team)} cards"
+    puts
     puts "Card to play, or blank to pass?"
     play = gets
     play.chomp!
@@ -77,6 +119,8 @@ class HumanAgent
 end
 
 class AiAgent
+  attr_reader :personality
+
   def initialize(team, personality)
     @team = team
     @personality = personality
@@ -101,10 +145,11 @@ class AiAgent
 
   def make_move(match)
     # Strategic TODOs
+    # * don't pass if you're the opener and you have more than two cards
+    # * in general, AI passes too much early on. pass less if you have more cards?
     # * Size opponent's play (min, max, mean) based on knowledge of their hand and # of cards played
     # * Play until your total exceeds your best estimate of their total, and no more
     # * don't play all of your cards in a semifinal (unless the other side of the bracket already did and you're the home team)
-    # * don't pass if you're the opener and you have more than two cards
     # * pass rate paramaterized on cards played / remaining
     # * if the opponent has passed, play the smallest card you can to win
 
@@ -112,13 +157,15 @@ class AiAgent
     opponent_starting_hand = match.opponent_starting_hand(@team)
     opponent_card_count = match.opponent_card_count(@team)
 
-    opponent_hand_estimates = Array.new(100) { opponent_starting_hand.shuffle.first(opponent_card_count).reduce(&:+) || 0 }
-    opponent_hand_estimate = opponent_hand_estimates.reduce(&:+).to_f / opponent_hand_estimates.size.to_f
+    # TODO this is unused, find something to do with it
+    #opponent_hand_estimates = Array.new(100) { opponent_starting_hand.shuffle.first(opponent_card_count).reduce(&:+) || 0 }
+    #opponent_hand_estimate = opponent_hand_estimates.reduce(&:+).to_f / opponent_hand_estimates.size.to_f
 
+    # TODO much of this context is cachable from play to play
     metrics = {
       worst_current_opponent_score: opponent_starting_hand.sort.first(opponent_card_count).reduce(&:+) || 0,
       best_current_opponent_score: opponent_starting_hand.sort.last(opponent_card_count).reduce(&:+) || 0,
-      estimated_current_opponent_score: opponent_hand_estimate,
+      #estimated_current_opponent_score: opponent_hand_estimate,
       best_possible_opponent_score: opponent_starting_hand.reduce(&:+) || 0,
       my_score: match.my_score(@team),
       my_best_possible_score: match.starting_hand(@team).reduce(&:+) || 0,
@@ -128,12 +175,20 @@ class AiAgent
       metrics[:best_possible_opponent_score] = metrics[:best_current_opponent_score]
     end
 
-    $logger.debug "Hand analysis: #{metrics.inspect}"
+    $logger.debug "hand analysis", metrics
 
-    aggression = @personality[:aggression] * metrics[:my_best_possible_score] / (metrics[:best_possible_opponent_score] + 1)
+    match_personality = @personality[match.stage]
+
+    score_ratio = metrics[:my_best_possible_score].to_f / (metrics[:best_possible_opponent_score].to_f + 1.0)
+    aggression = match_personality[:aggression] * (score_ratio ** match_personality[:score_ratio_exponent])
+    if match.is_home_team?(@team)
+      aggression *= match_personality[:home_aggression_bonus]
+    end
+
     $logger.debug "Aggression for this play is: #{aggression}"
-    # TODO bonus aggression for home team
-    # TODO make pass rate a fn of aggression
+
+    effective_pass_rate = match_personality[:pass_rate] / aggression
+    $logger.debug "Current pass rate is: #{effective_pass_rate}"
 
     if metrics[:my_score] > metrics[:best_possible_opponent_score]
       $logger.debug "Victory is guaranteed, passing"
@@ -145,7 +200,7 @@ class AiAgent
       # TODO No point in passing, *but* I maybe shouldn't be playing by best cards in this mode
       $logger.debug "Will never pass in the final with more than two cards left"
       play_card(aggression)
-    elsif Random.rand < @personality[:pass_rates][match.stage]
+    elsif Random.rand < effective_pass_rate
       :pass
     else
       play_card(aggression)
@@ -160,12 +215,12 @@ class Team
   attr_reader :name
   attr_reader :agent
 
-  def initialize(idx, human: false)
-    @name = ["Warriors", "Spurs", "Cavs", "Celtics"][idx]
+  def initialize(idx, human: false, personality: make_random_personality)
+    @name = ["Warriors", "Spurs", "Cavs", "Celtics"][idx] # TODO naming is broken-ish
     @roster = []
     @championships = 0
 
-    @agent = human ? HumanAgent.new(self) : AiAgent.new(self, PERSONALITIES[@name])
+    @agent = human ? HumanAgent.new(self) : AiAgent.new(self, personality)
   end
 
   def strength
@@ -212,7 +267,7 @@ class MatchParticipant
         if play_index = @team.roster.find_index(play)
           @cards_played << play
           @team.roster.delete_at(play_index)
-          $logger.debug "#{@team.name} played #{play}" # TODO hide from human
+          $logger.debug "#{@team.name} played" # #{play}" # TODO hide from human
         else
           raise "illegal play: #{play}"
         end
@@ -259,6 +314,10 @@ class Match
     [@home, @away].map(&:team).find { |t| t != team }
   end
 
+  def is_home_team?(team)
+    @home.team == team
+  end
+
   def play!
     $logger.debug "#{@home.team.name} have #{@home.team.roster.sort}"
     $logger.debug "#{@away.team.name} have #{@away.team.roster.sort}"
@@ -287,13 +346,12 @@ class Match
   end
 end
 
-def play_game!
+def play_game!(teams)
   draft_order = (0...PERMUTATIONS.size).map do |season|
     permute_array(GOFIRST_DRAFT_ORDER, season)
   end
 
-  teams = Array.new(TEAMS) { |i| Team.new(i) }
-  #teams[0] = Team.new(0, human: true)
+#  teams[0] = Team.new(0, human: true)
   teams.shuffle!
   free_agents = PLAYERS.dup
 
@@ -306,10 +364,10 @@ def play_game!
     end
   end
 
-  season = 0
+  season = $logger[:season] = 0
 
   while teams.all? { |t| t.championships < 3 }
-    $logger.debug "Season #{season} starting!"
+    $logger.debug "Season starting!"
 
     # loop through seasons until one team has three championships
     # three phases to season: 1) draft (with trades), 2) tournament, 3) offseason (retain up to two)
@@ -339,6 +397,7 @@ def play_game!
     final = Match.new(east_winner, west_winner,:final)
     champion = final.play!
     $logger.debug "Final: #{final.summary}"
+    $logger.debug "#{champion.name} wins the season!"
     champion.championships += 1
 
     # Return played cards to free agency
@@ -356,21 +415,56 @@ def play_game!
       end
     end
 
+    $logger.debug "Standings: #{teams.map { |t| [t.name, t.championships] }}"
     $logger.debug "Keepers: #{teams.map { |t| [t.name, t.roster] }}"
 
     season += 1
+    $logger[:season] = season
   end
 
-  teams.find { |t| t.championships == 3 }
+  victor = teams.find { |t| t.championships == 3 }
+  $logger.info "#{victor.name} have the dynasty!"
+  victor
 end
 
-win_rate = {}
+hall_of_fame = Array.new(20) { make_random_personality }
 
-10000.times do
-  winner = play_game!
-  win_rate[winner.name] ||= 0
-  win_rate[winner.name] += 1
+iteration = 0
+
+require 'pp'
+
+loop do
+  iteration += 1
+
+  # Age one team out of HoF
+  hall_of_fame.pop
+
+  # Make tournament
+  personalities = [hall_of_fame[0], # most recent winner
+                   cross_breed(hall_of_fame[0], hall_of_fame[Random.rand(hall_of_fame.size)]), # winner and offsping
+                   cross_breed(hall_of_fame[Random.rand(hall_of_fame.size)], hall_of_fame[Random.rand(hall_of_fame.size)]), # veteran offspring
+                   mutate(hall_of_fame[0]) # mutant
+                  ]
+
+  teams = personalities.each_with_index.map { |p,i| Team.new(i, personality: p) }
+  winner = play_game!(teams)
+  hall_of_fame.unshift(winner.agent.personality)
+
+  $logger.warn "winner", winner.agent.personality
+
+  if (iteration % 1000) == 0
+    hof_matrix = hall_of_fame.map do |hof|
+      row = []
+      [:semifinal, :final].each do |stage|
+        [:pass_rate, :aggression, :score_ratio_exponent, :home_aggression_bonus].each do |attr|
+          row << (hof[stage][attr] * 100).to_i
+        end
+      end
+      row
+    end
+
+    pp hof_matrix
+    puts
+    puts
+  end
 end
-
-$logger.info PERSONALITIES.inspect
-$logger.warn win_rate.inspect
