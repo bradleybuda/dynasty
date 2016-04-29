@@ -7,7 +7,7 @@ require 'cabin'
 
 $logger = Cabin::Channel.new
 $logger.subscribe(STDOUT)
-$logger.level = :error
+$logger.level = :debug
 
 TEAMS = 4
 INITIAL_ROSTER = [4,3]
@@ -153,6 +153,48 @@ class AiAgent
     end
   end
 
+  def find_remaining_picks(draft_order, team_indices, current_season, current_pick_index)
+    picks = []
+    draft_order.each_with_index do |season_draft_order, season|
+      next if season < current_season
+      season_draft_order.each_with_index do |pick, pick_index|
+        next if (season == current_season) && (pick_index < current_pick_index)
+
+        if team_indices.member? pick
+          picks << {team_index: pick, season: season, pick_index: pick_index}
+        end
+      end
+    end
+
+    picks
+  end
+
+  def request_trade_proposal(current_season, current_pick_index, draft_order)
+    if Random.rand < 0.15
+      my_picks = find_remaining_picks(draft_order, [@team.idx], current_season, current_pick_index)
+      others = [0,1,2,3]
+      others.delete(@team.idx)
+      others_picks = find_remaining_picks(draft_order, others, current_season, current_pick_index)
+
+      if others_picks.empty?
+        nil # Nothing to trade for
+      else
+        # TODO remove .first, there for simpler debugging
+        from_pick = my_picks.first(5).shuffle.first
+        to_pick = others_picks.first(30).shuffle.first
+
+        Trade.new to_pick[:team_index], to_pick[:season], to_pick[:pick_index],
+                  from_pick[:team_index], from_pick[:season], from_pick[:pick_index]
+      end
+    else
+      nil
+    end
+  end
+
+  def accept_trade?(season, pick_index, draft_order, trade)
+    Random.rand < 0.6
+  end
+
   def make_move(match)
     # Strategic TODOs
     # * don't pass if you're the opener and you have more than two cards
@@ -235,13 +277,15 @@ end
 
 
 class Team
+  attr_reader :idx
   attr_reader :roster
   attr_accessor :championships
   attr_reader :name
   attr_reader :agent
 
   def initialize(idx, human: false, personality: make_random_personality)
-    @name = ["Warriors", "Spurs", "Cavs", "Celtics"][idx] # TODO naming is broken-ish
+    @idx = idx
+    @name = ["Warriors", "Spurs", "Cavs", "Celtics"][@idx] # TODO naming is broken-ish
     @roster = []
     @championships = 0
 
@@ -371,7 +415,19 @@ class Match
   end
 end
 
+class Trade < Struct.new(:to_team_index, :to_season, :to_pick_index, :from_team_index, :from_season, :from_pick_index)
+  def team_gets(team_index, season, pick_index)
+    name = ["Warriors", "Spurs", "Cavs", "Celtics"][team_index] # TODO naming is broken-ish
+    "#{name} get pick #{pick_index} in season #{season}"
+  end
+
+  def to_s
+    "#{team_gets(from_team_index, to_season, to_pick_index)}, #{team_gets(to_team_index, from_season, from_pick_index)}"
+  end
+end
+
 def play_game!(teams)
+  # TODO structure this as a 2d array of picks instead of numbers
   draft_order = (0...PERMUTATIONS.size).map do |season|
     permute_array(GOFIRST_DRAFT_ORDER, season)
   end
@@ -398,13 +454,31 @@ def play_game!(teams)
     # Phase 1: Draft
 
     # Do a straight draft w/o trades
-    # TODO permute draft order by season
     free_agents.sort!.reverse!
-    draft_order[season].each do |team_to_draft_next|
-      team = teams[team_to_draft_next]
+    (0...(DRAFT_ROUNDS * TEAMS)).each do |pick_index|
+      $logger[:pick] = pick_index
+      on_the_clock = teams[draft_order[season][pick_index]]
+      $logger.debug "#{on_the_clock.name} are on the clock"
+
+      trade = on_the_clock.agent.request_trade_proposal(season, pick_index, draft_order)
+      if trade # TODO validate trade proposal
+        $logger.info "trade proposed", trade: trade.to_s
+        if teams[trade.to_team_index].agent.accept_trade?(season, pick_index, draft_order, trade)
+          $logger.info "trade accepted!", trade: trade.to_s
+          draft_order[trade.to_season][trade.to_pick_index] = trade.from_team_index
+          draft_order[trade.from_season][trade.from_pick_index] = trade.to_team_index
+
+          now_on_the_clock = teams[draft_order[season][pick_index]] # in case this has changed in the trade we just did
+          if now_on_the_clock != on_the_clock
+            on_the_clock = now_on_the_clock
+            $logger.info "After trade, #{on_the_clock.name} are now on the clock"
+          end
+        end
+      end
+
       next_free_agent = free_agents.shift
-      team.roster <<  next_free_agent
-      $logger.debug "#{team.name} pick #{next_free_agent}"
+      on_the_clock.roster <<  next_free_agent
+      $logger.debug "#{on_the_clock.name} pick #{next_free_agent}"
     end
 
     # Phase 2: Tournament
