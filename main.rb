@@ -7,7 +7,7 @@ require 'cabin'
 
 $logger = Cabin::Channel.new
 $logger.subscribe(STDOUT)
-$logger.level = :debug
+$logger.level = :error
 
 TEAMS = 4
 INITIAL_ROSTER = [4,3]
@@ -55,7 +55,8 @@ raise unless GOFIRST_DRAFT_ORDER.size == (DRAFT_ROUNDS * TEAMS)
 #puts draft_order.map{ |d| d.join(",") }.join("\n")
 
 # Not really very stable at all
-BEST_KNOWN_PERSONALITY = {:trade=>{:discount_rate=>0.05,:greed=>0.1},:semifinal=>{:pass_rate=>1.0696475272189916, :aggression=>0.0013827640401035998, :score_ratio_exponent=>2.1563033338076782, :home_aggression_bonus=>1.4787667974463488}, :final=>{:pass_rate=>0.034638097092212786, :aggression=>6.875988116259013, :score_ratio_exponent=>2.0428466152764955, :home_aggression_bonus=>1.275651718681938}}
+BEST_KNOWN_PERSONALITY = {:trade=>{:discount_rate=>0.20197358138194768, :greed=>0.2246163019335792}, :semifinal=>{:pass_rate=>0.35100092192245164, :aggression=>0.1455125413275264, :score_ratio_exponent=>1.5186101104510794, :home_aggression_bonus=>2.65584984909288}, :final=>{:pass_rate=>0.024187941063476125, :aggression=>10.574063391446504, :score_ratio_exponent=>1.107944461262698, :home_aggression_bonus=>1.293352894099222}}
+
 
 # TODO optimize AIs - search, GA, etc
 def make_random_personality
@@ -570,6 +571,8 @@ require 'pp'
 loop do
   iteration += 1
 
+  # TODO Elo or other player ratings?
+
   # Choose players for tournament
   personalities = [hall_of_fame[0], # most recent winner
                    cross_breed(hall_of_fame[0], hall_of_fame[Random.rand(hall_of_fame.size)]), # winner and offsping
@@ -601,14 +604,16 @@ loop do
 
   $logger.warn "winner", round_robin_winner
 
-
-  if (iteration % 1000) == 0
+  if (iteration % 100) == 0
     p "best known:"
     p hall_of_fame[0]
 
     p "current hof:"
     hof_matrix = hall_of_fame.map do |hof|
       row = []
+      row << (hof[:trade][:discount_rate] * 100).to_i
+      row << (hof[:trade][:greed] * 100).to_i
+
       [:semifinal, :final].each do |stage|
         [:pass_rate, :aggression, :score_ratio_exponent, :home_aggression_bonus].each do |attr|
           row << (hof[stage][attr] * 100).to_i
