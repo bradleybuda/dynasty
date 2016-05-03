@@ -25,7 +25,7 @@ ActiveSupport::Dependencies.autoload_paths << 'lib'
 # TODO move to per-class loggers?
 $logger = Cabin::Channel.new
 $logger.subscribe(STDOUT)
-$logger.level = :error
+$logger.level = :info
 
 # Seems to be getting more stable?!?
 BEST_KNOWN_PERSONALITY = {:trade=>{:frequency=>0.9516041261893311, :discount_rate=>0.06350624921041632, :greed=>0.03890549363963399}, :semifinal=>{:pass_rate=>0.3739092425078163, :aggression=>0.6981277012787459, :score_ratio_exponent=>1.9134131331172328, :home_aggression_bonus=>1.316660849987346}, :final=>{:pass_rate=>0.24804306198435205, :aggression=>6.965948529802139, :score_ratio_exponent=>1.264220603096014, :home_aggression_bonus=>1.52822687647762}}
@@ -135,7 +135,7 @@ loop do
   [0,1,2,3].permutation.each do |permutation|
     personality_order = permutation.map { |perm| personalities[perm] }
     teams = personality_order.each_with_index.map { |p,i| Team.new(i, personality: p) }
-    #teams[0] = Team.new(0, human: true)
+    teams[0] = Team.new(0, human: true)
     winner, season = Game.new(teams).play!
     winner.agent.personality[:round_robin_wins] += 1
     winner.agent.personality[:cumulative_seasons_for_wins] += season

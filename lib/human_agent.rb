@@ -23,6 +23,8 @@ class HumanAgent
     return nil # TODO allow humans to propose trades
   end
 
+  # TODO would be nice to see which numbers go to which picks
+  # TODO also have AI use this context for current season instead of historic tables
   def accept_trade?(season, pick_index, draft_order, trade)
     puts
     puts "You are #{@team.name}"
