@@ -27,16 +27,17 @@ ActiveSupport::Dependencies.autoload_paths << 'lib'
 # TODO move to per-class loggers?
 $logger = Cabin::Channel.new
 $logger.subscribe(STDOUT)
-$logger.level = :debug
+$logger.level = :error
 
 # Not really very stable at all
-BEST_KNOWN_PERSONALITY = {:trade=>{:discount_rate=>0.20197358138194768, :greed=>0.2246163019335792}, :semifinal=>{:pass_rate=>0.35100092192245164, :aggression=>0.1455125413275264, :score_ratio_exponent=>1.5186101104510794, :home_aggression_bonus=>2.65584984909288}, :final=>{:pass_rate=>0.024187941063476125, :aggression=>10.574063391446504, :score_ratio_exponent=>1.107944461262698, :home_aggression_bonus=>1.293352894099222}}
+BEST_KNOWN_PERSONALITY = {:trade=>{:frequency=>0.15,:discount_rate=>0.20197358138194768, :greed=>0.2246163019335792}, :semifinal=>{:pass_rate=>0.35100092192245164, :aggression=>0.1455125413275264, :score_ratio_exponent=>1.5186101104510794, :home_aggression_bonus=>2.65584984909288}, :final=>{:pass_rate=>0.024187941063476125, :aggression=>10.574063391446504, :score_ratio_exponent=>1.107944461262698, :home_aggression_bonus=>1.293352894099222}}
 
 
 # TODO optimize AIs - search, GA, etc
 def make_random_personality
   {
     trade: {
+      frequency: Random.rand,
       discount_rate: Random.rand,
       greed: Random.rand,
     },
@@ -59,6 +60,7 @@ def cross_breed(a,b)
   child = {}
 
   child[:trade] = {
+    frequency: [a,b].shuffle.first[:trade][:frequency],
     discount_rate: [a,b].shuffle.first[:trade][:discount_rate],
     greed: [a,b].shuffle.first[:trade][:greed],
   }
@@ -77,6 +79,7 @@ def mutate(p)
   child = {}
 
   child[:trade] = {
+    frequency: p[:trade][:frequency] * (Random.rand * 0.1 + 0.95),
     discount_rate: p[:trade][:discount_rate] * (Random.rand * 0.1 + 0.95),
     greed: p[:trade][:greed] * (Random.rand * 0.1 + 0.95),
   }
@@ -132,7 +135,7 @@ loop do
   [0,1,2,3].permutation.each do |permutation|
     personality_order = permutation.map { |perm| personalities[perm] }
     teams = personality_order.each_with_index.map { |p,i| Team.new(i, personality: p) }
-    teams[0] = Team.new(0, human: true)
+    #teams[0] = Team.new(0, human: true)
     winner, season = Game.new(teams).play!
     winner.agent.personality[:round_robin_wins] += 1 # TODO factor in win speed
   end
@@ -140,7 +143,7 @@ loop do
   round_robin_winner = personalities.max_by { |p| p[:round_robin_wins] }
 
   # Occasionally inject a random vet
-  if (iteration % 50) == 0
+  if (iteration % 23) == 0
     hall_of_fame.pop
     hall_of_fame.unshift(make_random_personality)
   end
@@ -158,6 +161,7 @@ loop do
     p "current hof:"
     hof_matrix = hall_of_fame.map do |hof|
       row = []
+      row << (hof[:trade][:frequency] * 100).to_i
       row << (hof[:trade][:discount_rate] * 100).to_i
       row << (hof[:trade][:greed] * 100).to_i
 

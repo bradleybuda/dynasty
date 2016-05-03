@@ -1,4 +1,4 @@
-# TODO eliminate as many random "sort"s as I can
+# TODO eliminate as many "sort"s as I can, they are likely redundant
 class AiAgent
   attr_reader :personality
 
@@ -12,9 +12,8 @@ class AiAgent
     card
   end
 
-  def play_random_card(aggression, card_set: @team.roster)
-    # reduced the random bias here; TODO eliminate it? Random makes it hard to evolve
-    pick_index = ((0.2 * Random.rand + 0.9) * aggression * card_set.size).floor
+  def play_card_with_aggression(aggression, card_set: @team.roster)
+    pick_index = (aggression * card_set.size).floor
     if pick_index > card_set.size - 1
       pick_index = card_set.size - 1
     end
@@ -52,13 +51,16 @@ class AiAgent
   end
 
   def request_trade_proposal(current_season, current_pick_index, draft_order)
-    if Random.rand < 0.15
+    overall_pick_number = current_season * Game::PICKS_PER_ROUND + current_pick_index
+    magic_prime = 19
+
+    if (overall_pick_number % magic_prime) < (magic_prime * @personality[:trade][:frequency])
       my_picks = find_remaining_picks(draft_order, [@team.idx], current_season, current_pick_index)
       others = [0,1,2,3]
       others.delete(@team.idx)
       others_picks = find_remaining_picks(draft_order, others, current_season, current_pick_index)
 
-      from_pick = my_picks.shuffle.first
+      from_pick = my_picks.first # TODO allow the AI to trade future picks
       from_pick_value = pick_value(current_season, from_pick[:season], from_pick[:pick_index])
       greed_threshold = from_pick_value * (1 + @personality[:trade][:greed])
 
@@ -156,17 +158,17 @@ class AiAgent
       # We can take the lead by playing off a card that we would lose anyway in the offseason, so do it
       # This might not be optimal but it's better than the AI's current behavior
       # TODO but in most cases, still too conservative
-      $logger.debug "can take the lead with any of #{leapfrog_cards}, will play a random one"
-      play_random_card(aggression, card_set: leapfrog_cards)
+      $logger.debug "can take the lead with any of #{leapfrog_cards}, will play one of them"
+      play_card_with_aggression(aggression, card_set: leapfrog_cards)
 
     elsif (match.stage == :final) && (@team.roster.size > 2)
       # TODO No point in passing, *but* I maybe shouldn't be playing by best cards in this mode
       $logger.debug "Will never pass in the final with more than two cards left"
-      play_random_card(aggression)
-    elsif Random.rand < effective_pass_rate
+      play_card_with_aggression(aggression)
+    elsif effective_pass_rate > 0.5
       :pass
     else
-      play_random_card(aggression)
+      play_card_with_aggression(aggression)
     end
   end
 end
