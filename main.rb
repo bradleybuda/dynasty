@@ -24,56 +24,10 @@ require 'active_support'
 require 'active_support/dependencies'
 ActiveSupport::Dependencies.autoload_paths << 'lib'
 
+# TODO move to per-class loggers?
 $logger = Cabin::Channel.new
 $logger.subscribe(STDOUT)
 $logger.level = :debug
-
-TEAMS = 4
-INITIAL_ROSTER = [4,3]
-DRAFT_ROUNDS = 8
-
-PLAYERS = [10,
-           9,
-           8, 8,
-           7, 7,
-           6, 6, 6, 6,
-           5, 5, 5, 5,
-           4, 4, 4, 4, 4, 4,
-           3, 3, 3, 3, 3, 3,
-           2, 2, 2, 2, 2, 2,
-           1, 1, 1, 1, 1, 1, 1, 1,
-          ]
-
-raise unless PLAYERS.size == TEAMS * (INITIAL_ROSTER.size + DRAFT_ROUNDS)
-
-CHAMPIONSHIPS_TO_WIN = 3
-
-# TODO pick a sequence we like and stick with it
-PERMUTATIONS = [
-  [0, 1, 2, 3],
-  [1, 3, 0, 2],
-  [2, 1, 3, 0],
-  [3, 2, 0, 1],
-  [0, 3, 1, 2],
-  [1, 0, 2, 3],
-  [2, 3, 1, 0],
-  [3, 0, 2, 1],
-  [0, 2, 1, 3],
-]
-
-raise unless PERMUTATIONS.size == ((CHAMPIONSHIPS_TO_WIN - 1) * TEAMS) + 1
-
-def permute_array(array, permutation_index)
-  mapping = PERMUTATIONS[permutation_index]
-  array.map { |i| mapping[i] }
-end
-
-GOFIRST_DRAFT_ORDER =  [0,1,2,3, 3,2,1,0, 3,1,0,2, 2,0,1,3, 2,1,0,3, 3,0,1,2, 2,1,0,3, 3,0,1,2]
-raise unless GOFIRST_DRAFT_ORDER.size == (DRAFT_ROUNDS * TEAMS)
-
-TEAM_NAMES = %w(Red Yellow Blue Green) # just for human labeling
-
-#puts draft_order.map{ |d| d.join(",") }.join("\n")
 
 # Not really very stable at all
 BEST_KNOWN_PERSONALITY = {:trade=>{:discount_rate=>0.20197358138194768, :greed=>0.2246163019335792}, :semifinal=>{:pass_rate=>0.35100092192245164, :aggression=>0.1455125413275264, :score_ratio_exponent=>1.5186101104510794, :home_aggression_bonus=>2.65584984909288}, :final=>{:pass_rate=>0.024187941063476125, :aggression=>10.574063391446504, :score_ratio_exponent=>1.107944461262698, :home_aggression_bonus=>1.293352894099222}}
@@ -137,116 +91,19 @@ def mutate(p)
 end
 
 def draft_order_table(draft_order)
+  draft_rounds = draft_order[0].size
+
   s = ''
-  s += " |".colorize(:black) + (0...(DRAFT_ROUNDS * TEAMS)).map { |dr| (dr / 10).to_s.colorize(:black) }.join("|".colorize(:black)) + "\n"
-  s += " |".colorize(:black) + (0...(DRAFT_ROUNDS * TEAMS)).map { |dr| (dr % 10).to_s.colorize(:black) }.join("|".colorize(:black)) + "\n"
+  s += " |".colorize(:black) + (0...draft_rounds).map { |dr| (dr / 10).to_s.colorize(:black) }.join("|".colorize(:black)) + "\n"
+  s += " |".colorize(:black) + (0...draft_rounds).map { |dr| (dr % 10).to_s.colorize(:black) }.join("|".colorize(:black)) + "\n"
   draft_order.each_with_index do |season, season_idx|
     s += season_idx.to_s.colorize(:black) + "|".colorize(:black)
     s += season.map do |p|
-      name = TEAM_NAMES[p].to_s
+      name = Team::TEAM_NAMES[p].to_s
       name[0].colorize(name.downcase.to_sym)
     end.join("|".colorize(:black)) + "\n"
   end
   s
-end
-
-def play_game!(teams)
-  # TODO structure this as a 2d array of picks instead of numbers
-  draft_order = (0...PERMUTATIONS.size).map do |season|
-    permute_array(GOFIRST_DRAFT_ORDER, season)
-  end
-
-  free_agents = PLAYERS.dup
-
-  # Pre-game - give each team their initial roster
-
-  teams.each do |team|
-    INITIAL_ROSTER.each do |rank|
-      team.roster << rank
-      free_agents.delete_at(free_agents.find_index(rank))
-    end
-  end
-
-  season = $logger[:season] = 0
-
-  while teams.all? { |t| t.championships < 3 }
-    $logger.info "Season starting!"
-
-    # loop through seasons until one team has three championships
-    # three phases to season: 1) draft (with trades), 2) tournament, 3) offseason (retain up to two)
-
-    # Phase 1: Draft
-
-    # Do a straight draft w/o trades
-    free_agents.sort!.reverse!
-    (0...(DRAFT_ROUNDS * TEAMS)).each do |pick_index|
-      $logger[:pick] = pick_index
-      on_the_clock = teams[draft_order[season][pick_index]]
-      $logger.debug "#{on_the_clock.name} are on the clock"
-
-      trade = on_the_clock.agent.request_trade_proposal(season, pick_index, draft_order)
-      if trade # TODO validate trade proposal
-        $logger.info "trade proposed", trade: trade.to_s
-        if teams[trade.to_team_index].agent.accept_trade?(season, pick_index, draft_order, trade)
-          $logger.info "trade accepted!", trade: trade.to_s
-          draft_order[trade.to_season][trade.to_pick_index] = trade.from_team_index
-          draft_order[trade.from_season][trade.from_pick_index] = trade.to_team_index
-
-          now_on_the_clock = teams[draft_order[season][pick_index]] # in case this has changed in the trade we just did
-          if now_on_the_clock != on_the_clock
-            on_the_clock = now_on_the_clock
-            $logger.info "After trade, #{on_the_clock.name} are now on the clock"
-          end
-        end
-      end
-
-      next_free_agent = free_agents.shift
-      on_the_clock.roster <<  next_free_agent
-      $logger.debug "#{on_the_clock.name} pick #{next_free_agent}"
-    end
-
-    # Phase 2: Tournament
-    play_order = permute_array([0,1,2,3], season)
-    east_semi = Match.new(teams[play_order[0]],teams[play_order[1]],:semifinal)
-    east_winner = east_semi.play!
-    $logger.info "East semifinal: #{east_semi.summary}"
-
-    west_semi = Match.new(teams[play_order[2]],teams[play_order[3]],:semifinal)
-    west_winner = west_semi.play!
-    $logger.info "West semifinal: #{west_semi.summary}"
-
-    final = Match.new(east_winner, west_winner,:final)
-    champion = final.play!
-    $logger.info "Final: #{final.summary}"
-    $logger.info "#{champion.name} wins the season!"
-    champion.championships += 1
-
-    # Return played cards to free agency
-    [east_semi, west_semi, final].each { |match| free_agents.push(*match.cards_played) }
-
-
-    # Phase 3: Offseason
-
-    # Draw down each team to best two keepers
-    # TODO is there ever a reason for a team to voluntarily keep less than two? I don't think so...
-    teams.each do |team|
-      team.roster.sort!
-      while team.roster.size > 2
-        free_agents << team.roster.shift
-      end
-    end
-
-    $logger.info "Standings: #{teams.map { |t| [t.name, t.championships] }}"
-    $logger.info "Keepers: #{teams.map { |t| [t.name, t.roster] }}"
-
-    season += 1
-    $logger[:season] = season
-  end
-
-  victor = teams.find { |t| t.championships == 3 }
-  $logger.warn "#{victor.name} have the dynasty!"
-
-  [victor, season]
 end
 
 hall_of_fame = Array.new(20) { BEST_KNOWN_PERSONALITY.dup }
@@ -276,7 +133,7 @@ loop do
     personality_order = permutation.map { |perm| personalities[perm] }
     teams = personality_order.each_with_index.map { |p,i| Team.new(i, personality: p) }
     teams[0] = Team.new(0, human: true)
-    winner, season = play_game!(teams)
+    winner, season = Game.new(teams).play!
     winner.agent.personality[:round_robin_wins] += 1 # TODO factor in win speed
   end
 

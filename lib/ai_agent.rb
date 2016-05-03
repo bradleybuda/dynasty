@@ -48,7 +48,7 @@ class AiAgent
 
   def pick_value(current_season, pick_season, pick_index)
     # TODO measure real values for player at pick, instead of ideal; this is an over-estimate due to keepers
-    PLAYERS[pick_index] * ((1 - @personality[:trade][:discount_rate]) ** (pick_season - current_season))
+    Game::PLAYERS[pick_index] * ((1 - @personality[:trade][:discount_rate]) ** (pick_season - current_season))
   end
 
   def request_trade_proposal(current_season, current_pick_index, draft_order)

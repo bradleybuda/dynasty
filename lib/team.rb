@@ -1,4 +1,6 @@
 class Team
+  TEAM_NAMES = %w(Red Yellow Blue Green) # just for human labeling
+
   attr_reader :idx
   attr_reader :roster
   attr_accessor :championships
