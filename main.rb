@@ -17,6 +17,9 @@ require 'bundler/setup'
 
 require 'cabin'
 require 'colorize'
+require 'parallel'
+require 'securerandom'
+
 
 require 'active_support'
 require 'active_support/dependencies'
@@ -25,10 +28,10 @@ ActiveSupport::Dependencies.autoload_paths << 'lib'
 # TODO move to per-class loggers?
 $logger = Cabin::Channel.new
 $logger.subscribe(STDOUT)
-$logger.level = :info
+$logger.level = :error
 
 # Seems to be getting more stable?!?
-BEST_KNOWN_PERSONALITY = {:trade=>{:frequency=>0.9516041261893311, :discount_rate=>0.06350624921041632, :greed=>0.03890549363963399}, :semifinal=>{:pass_rate=>0.3739092425078163, :aggression=>0.6981277012787459, :score_ratio_exponent=>1.9134131331172328, :home_aggression_bonus=>1.316660849987346}, :final=>{:pass_rate=>0.24804306198435205, :aggression=>6.965948529802139, :score_ratio_exponent=>1.264220603096014, :home_aggression_bonus=>1.52822687647762}}
+BEST_KNOWN_PERSONALITY = {:trade=>{:frequency=>0.2667551815643707, :discount_rate=>0.05910189252437132, :greed=>0.13352102189862602}, :semifinal=>{:pass_rate=>0.5998970686994948, :aggression=>7.777411407003986, :score_ratio_exponent=>1.5089268786233467, :home_aggression_bonus=>1.375431427443493}, :final=>{:pass_rate=>0.022146069526769334, :aggression=>8.612861402749937, :score_ratio_exponent=>1.6007234715494845, :home_aggression_bonus=>1.9177660653999409}}
 
 # TODO optimize AIs - search, GA, etc
 def make_random_personality
@@ -127,19 +130,27 @@ loop do
                    cross_breed(hall_of_fame[0], hall_of_fame[Random.rand(hall_of_fame.size)]), # winner and offsping
                    cross_breed(hall_of_fame[Random.rand(hall_of_fame.size)], hall_of_fame[Random.rand(hall_of_fame.size)]), # veteran offspring
                    mutate(hall_of_fame[0]) # mutant
-                  ].each_with_index.map { |pers,i| pers.merge({round_robin_wins: 0, cumulative_seasons_for_wins: 0}) }
+                  ].each_with_index.map { |pers,i| pers.merge({uuid: SecureRandom.hex, round_robin_wins: 0, cumulative_seasons_for_wins: 0}) }
 
 
   # Play a round robin of these personalities to reduce noise and eliminate any ordering biases
   # TODO play these simultaneously to speed things up
-  [0,1,2,3].permutation.each do |permutation|
+  permutations = (0...Game::TEAM_COUNT).to_a.permutation.to_a
+
+  Parallel.map(permutations) do |permutation|
     personality_order = permutation.map { |perm| personalities[perm] }
     teams = personality_order.each_with_index.map { |p,i| Team.new(i, personality: p) }
-    teams[0] = Team.new(0, human: true)
+    #teams[0] = Team.new(0, human: true)
     winner, season = Game.new(teams).play!
-    winner.agent.personality[:round_robin_wins] += 1
-    winner.agent.personality[:cumulative_seasons_for_wins] += season
-    dynasties_by_position[personality_order.find_index(winner.agent.personality)] += 1
+    [winner.agent.personality[:uuid], season, permutation]
+  end.each do |(winner_uuid, season, permutation)|
+    personality_index = personalities.find_index { |p| p[:uuid] == winner_uuid }
+    personality = personalities[personality_index]
+    play_position = permutation[personality_index]
+
+    personality[:round_robin_wins] += 1
+    personality[:cumulative_seasons_for_wins] += season
+    dynasties_by_position[play_position] += 1
     distribution_of_season_counts[season] += 1
   end
 
