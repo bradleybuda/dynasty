@@ -5,14 +5,12 @@
 # - measure historic player value by draft position
 #   - does it vary over rounds? probably
 #   - teach AI to use it
-# - implement human trades
-#   - respond first, then propose
-# - "ui" for draft order, human-comprehensible
+# - implement human trade propsals
 # - more interesting trades (include players in trade, multiple picks on each side
 # - make it run faster
-# - make AI deterministic to make training stable
 # - AI passes too soon in round 1. should try harder to make the opponent spend cards, even if likely / guaranteed to lose
 # - vector of per-season discount rates rather than one fixed rate
+# - allow UI to trade later picks
 
 require 'rubygems'
 require 'bundler/setup'
@@ -29,9 +27,8 @@ $logger = Cabin::Channel.new
 $logger.subscribe(STDOUT)
 $logger.level = :error
 
-# Not really very stable at all
-BEST_KNOWN_PERSONALITY = {:trade=>{:frequency=>0.15,:discount_rate=>0.20197358138194768, :greed=>0.2246163019335792}, :semifinal=>{:pass_rate=>0.35100092192245164, :aggression=>0.1455125413275264, :score_ratio_exponent=>1.5186101104510794, :home_aggression_bonus=>2.65584984909288}, :final=>{:pass_rate=>0.024187941063476125, :aggression=>10.574063391446504, :score_ratio_exponent=>1.107944461262698, :home_aggression_bonus=>1.293352894099222}}
-
+# Seems to be getting more stable?!?
+BEST_KNOWN_PERSONALITY = {:trade=>{:frequency=>0.9516041261893311, :discount_rate=>0.06350624921041632, :greed=>0.03890549363963399}, :semifinal=>{:pass_rate=>0.3739092425078163, :aggression=>0.6981277012787459, :score_ratio_exponent=>1.9134131331172328, :home_aggression_bonus=>1.316660849987346}, :final=>{:pass_rate=>0.24804306198435205, :aggression=>6.965948529802139, :score_ratio_exponent=>1.264220603096014, :home_aggression_bonus=>1.52822687647762}}
 
 # TODO optimize AIs - search, GA, etc
 def make_random_personality
@@ -117,6 +114,9 @@ last_checkpoint = nil
 
 require 'pp'
 
+dynasties_by_position = [0,0,0,0]
+distribution_of_season_counts = [0,0,0,0,0,0,0,0,0]
+
 loop do
   iteration += 1
 
@@ -127,7 +127,7 @@ loop do
                    cross_breed(hall_of_fame[0], hall_of_fame[Random.rand(hall_of_fame.size)]), # winner and offsping
                    cross_breed(hall_of_fame[Random.rand(hall_of_fame.size)], hall_of_fame[Random.rand(hall_of_fame.size)]), # veteran offspring
                    mutate(hall_of_fame[0]) # mutant
-                  ].each_with_index.map { |pers,i| pers.merge({round_robin_wins: 0}) }
+                  ].each_with_index.map { |pers,i| pers.merge({round_robin_wins: 0, cumulative_seasons_for_wins: 0}) }
 
 
   # Play a round robin of these personalities to reduce noise and eliminate any ordering biases
@@ -137,10 +137,13 @@ loop do
     teams = personality_order.each_with_index.map { |p,i| Team.new(i, personality: p) }
     #teams[0] = Team.new(0, human: true)
     winner, season = Game.new(teams).play!
-    winner.agent.personality[:round_robin_wins] += 1 # TODO factor in win speed
+    winner.agent.personality[:round_robin_wins] += 1
+    winner.agent.personality[:cumulative_seasons_for_wins] += season
+    dynasties_by_position[personality_order.find_index(winner.agent.personality)] += 1
+    distribution_of_season_counts[season] += 1
   end
 
-  round_robin_winner = personalities.max_by { |p| p[:round_robin_wins] }
+  round_robin_winner = personalities.max_by { |p| [p[:round_robin_wins], -p[:cumulative_seasons_for_wins]] }
 
   # Occasionally inject a random vet
   if (iteration % 23) == 0
@@ -181,6 +184,10 @@ loop do
       p drift
     end
     last_checkpoint = checkpoint
+
+    p "dynasties by pos"
+    p dynasties_by_position
+    p distribution_of_season_counts
 
     puts
     puts
