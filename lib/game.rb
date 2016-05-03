@@ -70,9 +70,11 @@ class Game
       end
     end
 
-    season = $logger[:season] = 0
+    season = -1
 
     while @teams.all? { |t| t.championships < 3 }
+      season += 1
+      $logger[:season] = season
       $logger.info "Season starting!"
 
       # loop through seasons until one team has three championships
@@ -141,9 +143,6 @@ class Game
 
       $logger.info "Standings: #{@teams.map { |t| [t.name, t.championships] }}"
       $logger.info "Keepers: #{@teams.map { |t| [t.name, t.roster] }}"
-
-      season += 1
-      $logger[:season] = season
     end
 
     victor = @teams.find { |t| t.championships == 3 }
