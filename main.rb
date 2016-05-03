@@ -11,15 +11,18 @@
 # - more interesting trades (include players in trade, multiple picks on each side
 # - make it run faster
 # - make AI deterministic to make training stable
+# - AI passes too soon in round 1. should try harder to make the opponent spend cards, even if likely / guaranteed to lose
+# - vector of per-season discount rates rather than one fixed rate
 
 require 'rubygems'
 require 'bundler/setup'
 
 require 'cabin'
+require 'colorize'
 
 $logger = Cabin::Channel.new
 $logger.subscribe(STDOUT)
-$logger.level = :error
+$logger.level = :debug
 
 TEAMS = 4
 INITIAL_ROSTER = [4,3]
@@ -63,6 +66,8 @@ end
 
 GOFIRST_DRAFT_ORDER =  [0,1,2,3, 3,2,1,0, 3,1,0,2, 2,0,1,3, 2,1,0,3, 3,0,1,2, 2,1,0,3, 3,0,1,2]
 raise unless GOFIRST_DRAFT_ORDER.size == (DRAFT_ROUNDS * TEAMS)
+
+TEAM_NAMES = %w(Red Yellow Blue Green) # just for human labeling
 
 #puts draft_order.map{ |d| d.join(",") }.join("\n")
 
@@ -127,6 +132,20 @@ def mutate(p)
   child
 end
 
+def draft_order_table(draft_order)
+  s = ''
+  s += " |".colorize(:black) + (0...(DRAFT_ROUNDS * TEAMS)).map { |dr| (dr / 10).to_s.colorize(:black) }.join("|".colorize(:black)) + "\n"
+  s += " |".colorize(:black) + (0...(DRAFT_ROUNDS * TEAMS)).map { |dr| (dr % 10).to_s.colorize(:black) }.join("|".colorize(:black)) + "\n"
+  draft_order.each_with_index do |season, season_idx|
+    s += season_idx.to_s.colorize(:black) + "|".colorize(:black)
+    s += season.map do |p|
+      name = TEAM_NAMES[p].to_s
+      name[0].colorize(name.downcase.to_sym)
+    end.join("|".colorize(:black)) + "\n"
+  end
+  s
+end
+
 class HumanAgent
   def initialize(team)
     @team = team
@@ -134,9 +153,9 @@ class HumanAgent
 
   def make_move(match)
     puts
-    puts "You are the #{@team.name}"
+    puts "You are #{@team.name}"
     puts "Your hand: #{@team.roster.sort}"
-    puts "Opponent has played #{match.opponent_card_count(@team)} cards"
+    puts "#{match.opponent(@team).name} has played #{match.opponent_card_count(@team)} cards"
     puts
     puts "Card to play, or blank to pass?"
     play = gets
@@ -146,6 +165,22 @@ class HumanAgent
     else
       play.to_i
     end
+  end
+
+  def request_trade_proposal(current_season, current_pick_index, draft_order)
+    return nil # TODO allow humans to propose trades
+  end
+
+  def accept_trade?(season, pick_index, draft_order, trade)
+    puts
+    puts "You are #{@team.name}"
+    puts "Trade Proposal: #{trade.to_s}"
+    puts "It is currently season #{season}, pick #{pick_index}"
+    puts "Draft order:"
+    puts draft_order_table(draft_order)
+    puts "Y to accept, anything else to reject:"
+    puts
+    gets == "Y\n"
   end
 end
 
@@ -332,7 +367,7 @@ class Team
 
   def initialize(idx, human: false, personality: make_random_personality)
     @idx = idx
-    @name = ["Warriors", "Spurs", "Cavs", "Celtics"][@idx] # TODO naming is broken-ish
+    @name = TEAM_NAMES[@idx] # TODO naming is broken-ish
     @roster = []
     @championships = 0
 
@@ -464,7 +499,7 @@ end
 
 class Trade < Struct.new(:to_team_index, :to_season, :to_pick_index, :from_team_index, :from_season, :from_pick_index)
   def team_gets(team_index, season, pick_index)
-    name = ["Warriors", "Spurs", "Cavs", "Celtics"][team_index] # TODO naming is broken-ish
+    name = TEAM_NAMES[team_index] # TODO naming is broken-ish
     "#{name} get pick #{pick_index} in season #{season}"
   end
 
@@ -598,6 +633,7 @@ loop do
   [0,1,2,3].permutation.each do |permutation|
     personality_order = permutation.map { |perm| personalities[perm] }
     teams = personality_order.each_with_index.map { |p,i| Team.new(i, personality: p) }
+    teams[0] = Team.new(0, human: true)
     winner, season = play_game!(teams)
     winner.agent.personality[:round_robin_wins] += 1 # TODO factor in win speed
   end

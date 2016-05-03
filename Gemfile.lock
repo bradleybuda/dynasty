@@ -2,12 +2,14 @@ GEM
   remote: https://rubygems.org/
   specs:
     cabin (0.8.1)
+    colorize (0.7.7)
 
 PLATFORMS
   ruby
 
 DEPENDENCIES
   cabin
+  colorize
 
 BUNDLED WITH
    1.11.2
