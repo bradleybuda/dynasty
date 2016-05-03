@@ -1,5 +1,17 @@
 #!/usr/bin/env ruby
 
+# TODO
+# - measure win rate by starting position, see if we need to correct
+# - measure historic player value by draft position
+#   - does it vary over rounds? probably
+#   - teach AI to use it
+# - implement human trades
+#   - respond first, then propose
+# - "ui" for draft order, human-comprehensible
+# - more interesting trades (include players in trade, multiple picks on each side
+# - make it run faster
+# - make AI deterministic to make training stable
+
 require 'rubygems'
 require 'bundler/setup'
 
