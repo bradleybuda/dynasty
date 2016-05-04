@@ -46,11 +46,18 @@ class AiAgent
   end
 
   def pick_value(current_season, pick_season, pick_index, current_pick_index, current_free_agents)
-    undiscounted_estimated_pick_value = if pick_season == current_season
-                                          current_free_agents.sort.reverse[pick_index - current_pick_index]
-                                        else
-                                          AvgPickValue::VALUES[pick_season][pick_index]
-                                        end
+    undiscounted_estimated_pick_value =
+      if pick_season == current_season
+        current_free_agents.sort.reverse[pick_index - current_pick_index]
+      else
+        # TODO this is a little buggy because it conflates the value
+        # of the pick with the probability that the season even
+        # happens; i.e. in Season 0, picks from Season 8 correctly
+        # have low value because the game is likely to end before
+        # then, but by the time we reach Season 7 they have become
+        # much more valuable
+        AvgPickValue::VALUES[pick_season][pick_index]
+      end
 
 
     # TODO measure real values for player at pick, instead of ideal; this is an over-estimate due to keepers
