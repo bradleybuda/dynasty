@@ -89,10 +89,10 @@ class Game
         on_the_clock = @teams[draft_order[season][pick_index]]
         $logger.debug "#{on_the_clock.name} are on the clock"
 
-        trade = on_the_clock.agent.request_trade_proposal(season, pick_index, draft_order)
+        trade = on_the_clock.agent.request_trade_proposal(season, pick_index, draft_order, free_agents)
         if trade # TODO validate trade proposal
           $logger.info "trade proposed", trade: trade.to_s
-          if @teams[trade.to_team_index].agent.accept_trade?(season, pick_index, draft_order, trade)
+          if @teams[trade.to_team_index].agent.accept_trade?(season, pick_index, draft_order, trade, free_agents)
             $logger.info "trade accepted!", trade: trade.to_s
             draft_order[trade.to_season][trade.to_pick_index] = trade.from_team_index
             draft_order[trade.from_season][trade.from_pick_index] = trade.to_team_index

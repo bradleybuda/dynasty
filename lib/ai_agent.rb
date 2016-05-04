@@ -45,12 +45,20 @@ class AiAgent
     picks
   end
 
-  def pick_value(current_season, pick_season, pick_index)
+  def pick_value(current_season, pick_season, pick_index, current_pick_index, current_free_agents)
+    undiscounted_estimated_pick_value = if pick_season == current_season
+                                          current_free_agents.sort.reverse[pick_index - current_pick_index]
+                                        else
+                                          # TODO use historic data here
+                                          Game::PLAYERS[pick_index]
+                                        end
+
+
     # TODO measure real values for player at pick, instead of ideal; this is an over-estimate due to keepers
-    Game::PLAYERS[pick_index] * ((1 - @personality[:trade][:discount_rate]) ** (pick_season - current_season))
+    undiscounted_estimated_pick_value * ((1 - @personality[:trade][:discount_rate]) ** (pick_season - current_season))
   end
 
-  def request_trade_proposal(current_season, current_pick_index, draft_order)
+  def request_trade_proposal(current_season, current_pick_index, draft_order, current_free_agents)
     overall_pick_number = current_season * Game::PICKS_PER_ROUND + current_pick_index
     magic_prime = 19
 
@@ -61,7 +69,7 @@ class AiAgent
       others_picks = find_remaining_picks(draft_order, others, current_season, current_pick_index)
 
       from_pick = my_picks.first # TODO allow the AI to trade future picks
-      from_pick_value = pick_value(current_season, from_pick[:season], from_pick[:pick_index])
+      from_pick_value = pick_value(current_season, from_pick[:season], from_pick[:pick_index], current_pick_index, current_free_agents)
       greed_threshold = from_pick_value * (1 + @personality[:trade][:greed])
 
       # Look for a target that's more valuable than my pick but within my greed threshold
@@ -69,12 +77,12 @@ class AiAgent
         # Don't bother proposing a trade within season
         next if (from_pick[:season] == other_pick[:season])
 
-        to_pick_value = pick_value(current_season, other_pick[:season], other_pick[:pick_index])
+        to_pick_value = pick_value(current_season, other_pick[:season], other_pick[:pick_index], current_pick_index, current_free_agents)
         (to_pick_value > from_pick_value) && (to_pick_value <= greed_threshold)
       end
 
       if to_pick
-        $logger.debug "Proposing trade which loses #{from_pick_value} and gains #{pick_value(current_season, to_pick[:season], to_pick[:pick_index])}"
+        $logger.debug "Proposing trade which loses #{from_pick_value} and gains #{pick_value(current_season, to_pick[:season], to_pick[:pick_index], current_pick_index, current_free_agents)}"
 
         Trade.new to_pick[:team_index], to_pick[:season], to_pick[:pick_index],
                   from_pick[:team_index], from_pick[:season], from_pick[:pick_index]
@@ -86,9 +94,9 @@ class AiAgent
     end
   end
 
-  def accept_trade?(season, pick_index, draft_order, trade)
-    lost_value = pick_value(season, trade.to_season, trade.to_pick_index)
-    gained_value = pick_value(season, trade.from_season, trade.from_pick_index)
+  def accept_trade?(season, current_pick_index, draft_order, trade, current_free_agents)
+    lost_value = pick_value(season, trade.to_season, trade.to_pick_index, current_pick_index, current_free_agents)
+    gained_value = pick_value(season, trade.from_season, trade.from_pick_index, current_pick_index, current_free_agents)
     $logger.debug "Evaluating trade which loses #{lost_value} and gains #{gained_value}"
     gained_value > lost_value
   end
