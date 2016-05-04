@@ -31,7 +31,7 @@ $logger.subscribe(STDOUT)
 $logger.level = :error
 
 # Seems to be getting more stable?!?
-BEST_KNOWN_PERSONALITY = {:trade=>{:frequency=>0.2667551815643707, :discount_rate=>0.05910189252437132, :greed=>0.13352102189862602}, :semifinal=>{:pass_rate=>0.5998970686994948, :aggression=>7.777411407003986, :score_ratio_exponent=>1.5089268786233467, :home_aggression_bonus=>1.375431427443493}, :final=>{:pass_rate=>0.022146069526769334, :aggression=>8.612861402749937, :score_ratio_exponent=>1.6007234715494845, :home_aggression_bonus=>1.9177660653999409}}
+BEST_KNOWN_PERSONALITY = {:trade=>{:frequency=>0.1346542765350213, :discount_rate=>0.02043256614485133, :greed=>0.039589378112279396}, :semifinal=>{:pass_rate=>0.07983718302209565, :aggression=>0.2618421839033439, :score_ratio_exponent=>0.26476616104536316, :home_aggression_bonus=>0.972473951860613}, :final=>{:pass_rate=>0.233350049235459, :aggression=>6.262971407002317, :score_ratio_exponent=>3.680982729550147, :home_aggression_bonus=>1.294798043417256}}
 
 # TODO optimize AIs - search, GA, etc
 def make_random_personality
@@ -119,6 +119,7 @@ require 'pp'
 
 dynasties_by_position = [0,0,0,0]
 distribution_of_season_counts = [0,0,0,0,0,0,0,0,0]
+sum_of_picks_made = Array.new(Game::MAXIMUM_SEASONS_REQUIRED) { Array.new(Game::PICKS_PER_ROUND,0) }
 
 loop do
   iteration += 1
@@ -140,9 +141,13 @@ loop do
     personality_order = permutation.map { |perm| personalities[perm] }
     teams = personality_order.each_with_index.map { |p,i| Team.new(i, personality: p) }
     #teams[0] = Team.new(0, human: true)
-    winner, season = Game.new(teams).play!
-    [winner.agent.personality[:uuid], season, permutation]
-  end.each do |(winner_uuid, season, permutation)|
+    game = Game.new(teams)
+    game.play!
+    [game.victor.agent.personality[:uuid], game.season, permutation, game.picks_made]
+  end.each do |(winner_uuid, season, permutation, picks_made)|
+    # Count no pick as a zero because in the model that pick never became worth anything
+    picks_made.each_with_index { |x,i| x.each_with_index { |y, j| sum_of_picks_made[i][j] += (y || 0) }}
+
     personality_index = personalities.find_index { |p| p[:uuid] == winner_uuid }
     personality = personalities[personality_index]
     play_position = permutation[personality_index]
@@ -197,7 +202,12 @@ loop do
 
     p "dynasties by pos"
     p dynasties_by_position
+
+    p "game lenghts in seasons"
     p distribution_of_season_counts
+
+    p "avg pick value"
+    pp sum_of_picks_made.map { |a| a.map { |b| (b || 0).to_f / (iteration * permutations.size).to_f } }
 
     puts
     puts

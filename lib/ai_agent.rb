@@ -49,8 +49,7 @@ class AiAgent
     undiscounted_estimated_pick_value = if pick_season == current_season
                                           current_free_agents.sort.reverse[pick_index - current_pick_index]
                                         else
-                                          # TODO use historic data here
-                                          Game::PLAYERS[pick_index]
+                                          AvgPickValue::VALUES[pick_season][pick_index]
                                         end
 
 
