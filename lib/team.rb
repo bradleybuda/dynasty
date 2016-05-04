@@ -7,13 +7,18 @@ class Team
   attr_reader :name
   attr_reader :agent
 
-  def initialize(idx, human: false, personality: make_random_personality)
+  def initialize(idx, human: false, personality: nil)
     @idx = idx
     @name = TEAM_NAMES[@idx] # TODO naming is broken-ish
     @roster = []
     @championships = 0
 
-    @agent = human ? HumanAgent.new(self) : AiAgent.new(self, personality)
+    @agent = if human
+               HumanAgent.new(self)
+             else
+               raise unless personality
+               AiAgent.new(self, personality)
+             end
   end
 
   def strength

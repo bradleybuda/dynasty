@@ -1,3 +1,5 @@
+require 'colorize'
+
 class HumanAgent
   def initialize(team)
     @team = team
@@ -36,5 +38,23 @@ class HumanAgent
     puts "Y to accept, anything else to reject:"
     puts
     gets == "Y\n"
+  end
+
+  private
+
+  def draft_order_table(draft_order)
+    draft_rounds = draft_order[0].size
+
+    s = ''
+    s += " |".colorize(:black) + (0...draft_rounds).map { |dr| (dr / 10).to_s.colorize(:black) }.join("|".colorize(:black)) + "\n"
+    s += " |".colorize(:black) + (0...draft_rounds).map { |dr| (dr % 10).to_s.colorize(:black) }.join("|".colorize(:black)) + "\n"
+    draft_order.each_with_index do |season, season_idx|
+      s += season_idx.to_s.colorize(:black) + "|".colorize(:black)
+      s += season.map do |p|
+        name = Team::TEAM_NAMES[p].to_s
+        name[0].colorize(name.downcase.to_sym)
+      end.join("|".colorize(:black)) + "\n"
+    end
+    s
   end
 end
