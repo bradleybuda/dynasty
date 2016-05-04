@@ -134,7 +134,6 @@ loop do
 
 
   # Play a round robin of these personalities to reduce noise and eliminate any ordering biases
-  # TODO play these simultaneously to speed things up
   permutations = (0...Game::TEAM_COUNT).to_a.permutation.to_a
 
   Parallel.map(permutations) do |permutation|
